@@ -3,11 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
-	"time"
-
 	"github.com/marcusolsson/tui-go"
 	"net/http"
 	"github.com/gorilla/websocket"
+	"time"
 )
 
 
@@ -15,6 +14,7 @@ type chatView struct{
 	History *tui.Box
 	Input *tui.Entry
 	Chat *tui.Box
+
 }
 
 func (view *chatView) SetupChat(){
@@ -41,6 +41,16 @@ func (view *chatView) SetupChat(){
 	view.Input = input
 }
 
+func (view *chatView) AppendToHistory(message string){
+	view.History.Append(
+		tui.NewHBox(
+			tui.NewLabel(time.Now().Format("15:04")),
+			tui.NewPadder(1, 0, tui.NewLabel(fmt.Sprintf("<%s>", "john"))),
+			tui.NewLabel(message),
+			tui.NewSpacer(),
+		),
+	)
+}
 
 func connectToSocket(url string) *websocket.Conn{
 	header := make(http.Header)
@@ -58,7 +68,23 @@ func connectToSocket(url string) *websocket.Conn{
 	return conn
 }
 
+func (view *chatView) updateHistory(parentUI tui.UI, pipe chan string){
+	for {
+		message := <-pipe
+		view.AppendToHistory(message)
+		parentUI.Update(func(){})
+	}
+}
 
+func checkSocket(conn *websocket.Conn, pipe chan string){
+	for {
+		_, m, err:= conn.ReadMessage()
+		if err != nil {
+			panic(err)
+		}
+		pipe <- string(m)
+	}
+}
 
 
 func main() {
@@ -68,23 +94,20 @@ func main() {
 	chatView := chatView{}
 	chatView.SetupChat()
 
-
-
 	chatView.Input.OnSubmit(func(e *tui.Entry) {
+		chatView.AppendToHistory(e.Text())
 		message := []byte(e.Text())
 		conn.WriteMessage(websocket.TextMessage, message)
-		chatView.History.Append(tui.NewHBox(
-			tui.NewLabel(time.Now().Format("15:04")),
-			tui.NewPadder(1, 0, tui.NewLabel(fmt.Sprintf("<%s>", "john"))),
-			tui.NewLabel(e.Text()),
-			tui.NewSpacer(),
-		))
 		chatView.Input.SetText("")
 	})
 
 	root := tui.NewHBox(chatView.Chat)
 	ui, err := tui.New(root)
-	
+
+	pipe := make(chan string)
+	go checkSocket(conn, pipe)
+	go chatView.updateHistory(ui, pipe)
+
 	if err != nil {
 		log.Fatal(err)
 	}
